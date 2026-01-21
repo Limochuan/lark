@@ -3,8 +3,8 @@ from fastapi.responses import JSONResponse
 import datetime
 import traceback
 
-from app.services.approval_service import get_approval_instance
-from app.utils.approval_parser import parse_approval_form
+# ✅ 改这里：不再直接调飞书 API，不再自己解析
+from app.services.approval_service import ApprovalService
 
 # FastAPI 路由对象，main.py 就是 import 的这个
 router = APIRouter()
@@ -14,6 +14,11 @@ router = APIRouter()
 async def approval_callback(request: Request):
     """
     飞书审批回调入口
+
+    职责说明：
+    1. 接收飞书回调原始 payload
+    2. 不做业务解析
+    3. 直接交给 ApprovalService 统一处理
     """
     try:
         # 读取回调原始 JSON
@@ -23,41 +28,14 @@ async def approval_callback(request: Request):
         print(data)
         print("=================================\n")
 
-        approval_code = data.get("approval_code")
+        # 只做最基本的存在性校验（防止无意义请求）
         instance_code = data.get("instance_code")
-        status = data.get("status")
-        event_type = data.get("type")
-        uuid = data.get("uuid")
-
-        print("event_type:", event_type)
-        print("status:", status)
-        print("approval_code:", approval_code)
-        print("instance_code:", instance_code)
-        print("uuid:", uuid)
-        print("=================================\n")
-
         if not instance_code:
-            raise ValueError("instance_code 为空，无法拉取审批实例")
+            raise ValueError("回调数据中缺少 instance_code")
 
-        # 二次拉取完整审批实例
-        approval_instance = get_approval_instance(instance_code)
-
-        print("\n==== 审批实例完整数据（飞书 API 返回） ====")
-        print(approval_instance)
-        print("==========================================\n")
-
-        # 解析 form 字段为 dict
-        form_raw = approval_instance.get("form")
-        form_data = parse_approval_form(form_raw)
-
-        print("\n==== 审批表单字段（解析后） ====")
-        print(form_data)
-        print("================================\n")
-
-        # 这里以后可以：
-        # - 写数据库
-        # - 对接 ERP / Dynamics
-        # - 推送 Teams / 飞书消息
+        # 业务全部交给 Service
+        service = ApprovalService()
+        service.process_callback(data)
 
         return JSONResponse(
             status_code=200,
