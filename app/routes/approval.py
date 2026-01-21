@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse
 import datetime
 import traceback
 
-# ✅ 改这里：不再直接调飞书 API，不再自己解析
+# 改这里：不再直接调飞书 API，不再自己解析
 from app.services.approval_service import ApprovalService
 
 # FastAPI 路由对象，main.py 就是 import 的这个
