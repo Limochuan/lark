@@ -14,21 +14,20 @@ async def approval_callback(request: Request):
     """
     飞书审批回调入口
     - 接收飞书推送的审批事件
-    - 根据 instance_code 再次调用飞书接口，拉取完整审批实例
-    - 当前阶段仅做日志打印和链路验证，不做业务处理
+    - 使用 instance_code 拉取完整审批实例
+    - 解析审批表单 form 字段
     """
     try:
-        # 读取飞书回调的原始 JSON 数据
+        # 读取回调原始数据
         data = await request.json()
 
         print("\n==== 收到审批回调（原始数据） ====")
         print(json.dumps(data, ensure_ascii=False, indent=2))
         print("=================================\n")
 
-        # 回调中携带的基础字段
         approval_code = data.get("approval_code")
         instance_code = data.get("instance_code")
-        status = data.get("status")          # APPROVED / REJECTED
+        status = data.get("status")
         event_type = data.get("type")
         uuid = data.get("uuid")
 
@@ -38,22 +37,35 @@ async def approval_callback(request: Request):
         print("event_type:", event_type)
         print("uuid:", uuid)
 
-        # instance_code 是后续查询审批详情的关键字段
         if not instance_code:
             raise ValueError("回调数据中缺少 instance_code")
 
-        # 根据 instance_code 调用飞书接口，获取完整审批实例
+        # 拉取完整审批实例
         approval_instance = get_approval_instance(instance_code)
 
         print("\n==== 审批实例完整数据（飞书 API 返回） ====")
         print(json.dumps(approval_instance, ensure_ascii=False, indent=2))
         print("==========================================\n")
 
-        # 审批表单数据（真正业务会用到的部分）
-        form = approval_instance.get("form", [])
+        # ========= 关键修复点 =========
+        # 飞书返回的 form 是 JSON 字符串，需要反序列化
+        raw_form = approval_instance.get("form")
 
-        print("\n==== 审批表单字段（结构化打印） ====")
-        for item in form:
+        if not raw_form:
+            print("审批实例中未包含 form 字段")
+            form_list = []
+        elif isinstance(raw_form, str):
+            try:
+                form_list = json.loads(raw_form)
+            except json.JSONDecodeError:
+                raise ValueError("form 字段不是合法的 JSON 字符串")
+        elif isinstance(raw_form, list):
+            form_list = raw_form
+        else:
+            raise ValueError(f"未知的 form 类型: {type(raw_form)}")
+
+        print("\n==== 审批表单字段（解析后） ====")
+        for item in form_list:
             field_name = item.get("name")
             field_type = item.get("type")
             field_value = item.get("value")
@@ -62,9 +74,8 @@ async def approval_callback(request: Request):
             print(f"字段类型: {field_type}")
             print(f"字段值: {field_value}")
             print("------")
-        print("====================================\n")
+        print("================================\n")
 
-        # 当前阶段不做任何业务处理，只返回成功给飞书
         return JSONResponse(
             status_code=200,
             content={
