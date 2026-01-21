@@ -1,11 +1,5 @@
 """
 审批数据写入数据库的仓储层（Repository）
-
-职责说明：
-1. 只负责 MySQL 数据写入 / 更新
-2. 不关心 FastAPI / HTTP / 飞书校验
-3. 不做业务判断，不解析 JSON 结构
-4. 所有方法由 service 层调用
 """
 
 import json
@@ -15,18 +9,12 @@ from app.db.mysql import get_conn
 
 
 class ApprovalRepository:
-    """
-    审批数据仓储类
-    """
 
     def __init__(self):
-        """
-        初始化数据库连接
-        """
         self.conn = get_conn()
 
     # =========================
-    # 1. 原始审批数据（兜底）
+    # 1. 原始审批数据
     # =========================
     def save_raw_data(self, instance_code: str, raw_data: Dict[str, Any]):
         sql = """
@@ -38,14 +26,10 @@ class ApprovalRepository:
         ON DUPLICATE KEY UPDATE
             raw_json = VALUES(raw_json)
         """
-
         with self.conn.cursor() as cursor:
             cursor.execute(
                 sql,
-                (
-                    instance_code,
-                    json.dumps(raw_data, ensure_ascii=False),
-                ),
+                (instance_code, json.dumps(raw_data, ensure_ascii=False)),
             )
 
     # =========================
@@ -65,13 +49,12 @@ class ApprovalRepository:
             create_time,
             update_time
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
         ON DUPLICATE KEY UPDATE
             status = VALUES(status),
             end_time = VALUES(end_time),
             update_time = VALUES(update_time)
         """
-
         with self.conn.cursor() as cursor:
             cursor.execute(
                 sql,
@@ -90,7 +73,7 @@ class ApprovalRepository:
             )
 
     # =========================
-    # 3. 审批任务 / 节点
+    # 3. 审批任务 / 节点（关键修复）
     # =========================
     def save_tasks(self, instance_code: str, tasks: List[Dict[str, Any]]):
         if not tasks:
@@ -107,7 +90,7 @@ class ApprovalRepository:
             start_time,
             end_time
         )
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
         ON DUPLICATE KEY UPDATE
             status = VALUES(status),
             end_time = VALUES(end_time)
@@ -119,9 +102,9 @@ class ApprovalRepository:
                     sql,
                     (
                         instance_code,
-                        task.get("task_id"),
+                        task.get("id"),          # ✅ 修复点
                         task.get("node_name"),
-                        task.get("node_type"),
+                        task.get("type"),
                         task.get("status"),
                         task.get("user_id"),
                         task.get("start_time"),
@@ -130,7 +113,7 @@ class ApprovalRepository:
                 )
 
     # =========================
-    # 4. 表单字段数据
+    # 4. 表单字段
     # =========================
     def save_form_fields(self, instance_code: str, fields: List[Dict[str, Any]]):
         if not fields:
@@ -144,7 +127,7 @@ class ApprovalRepository:
             field_type,
             field_value
         )
-        VALUES (%s, %s, %s, %s, %s)
+        VALUES (%s,%s,%s,%s,%s)
         ON DUPLICATE KEY UPDATE
             field_value = VALUES(field_value)
         """
