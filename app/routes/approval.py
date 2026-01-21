@@ -1,100 +1,142 @@
+import os
+import json
+import requests
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
-import datetime
-import traceback
-import json
 
-from app.services.approval_service import get_approval_instance
+from app.utils.approval_parser import parse_approval_form
 
 router = APIRouter()
 
+# =========================
+# 飞书应用配置（从环境变量读取）
+# =========================
+LARK_APP_ID = os.getenv("LARK_APP_ID")
+LARK_APP_SECRET = os.getenv("LARK_APP_SECRET")
 
+LARK_TOKEN_URL = "https://open.larksuite.com/open-apis/auth/v3/app_access_token/internal"
+LARK_APPROVAL_INSTANCE_URL = "https://open.larksuite.com/open-apis/approval/v4/instances"
+
+
+# =========================
+# 获取 app_access_token
+# =========================
+def get_app_access_token() -> str:
+    """
+    使用 app_id 和 app_secret 换取 app_access_token
+    该 token 用于后续调用审批实例接口
+    """
+
+    payload = {
+        "app_id": LARK_APP_ID,
+        "app_secret": LARK_APP_SECRET
+    }
+
+    resp = requests.post(LARK_TOKEN_URL, json=payload, timeout=10)
+
+    print("==== 获取 app_access_token 返回 ====")
+    print(f"STATUS: {resp.status_code}")
+    print(f"RAW RESPONSE: {resp.text}")
+
+    resp.raise_for_status()
+    data = resp.json()
+
+    return data["app_access_token"]
+
+
+# =========================
+# 获取审批实例详情
+# =========================
+def get_approval_instance(instance_code: str, token: str) -> dict:
+    """
+    根据 instance_code 获取审批实例完整数据
+    """
+
+    url = f"{LARK_APPROVAL_INSTANCE_URL}/{instance_code}"
+    headers = {
+        "Authorization": f"Bearer {token}"
+    }
+
+    resp = requests.get(url, headers=headers, timeout=10)
+
+    print("==== 飞书审批实例接口返回 ====")
+    print(f"请求 URL: {url}")
+    print(f"HTTP 状态码: {resp.status_code}")
+    print(f"响应 Header: {resp.headers}")
+    print(f"原始响应内容: {resp.text}")
+
+    resp.raise_for_status()
+    return resp.json()["data"]
+
+
+# =========================
+# 审批回调入口
+# =========================
 @router.post("/approval/callback")
 async def approval_callback(request: Request):
     """
-    飞书审批回调入口
-    - 接收飞书推送的审批事件
-    - 使用 instance_code 拉取完整审批实例
-    - 解析审批表单 form 字段
+    飞书审批回调统一入口
     """
+
     try:
-        # 读取回调原始数据
-        data = await request.json()
+        body = await request.json()
 
-        print("\n==== 收到审批回调（原始数据） ====")
-        print(json.dumps(data, ensure_ascii=False, indent=2))
-        print("=================================\n")
+        print("==== 收到审批回调（原始数据） ====")
+        print(json.dumps(body, indent=2, ensure_ascii=False))
 
-        approval_code = data.get("approval_code")
-        instance_code = data.get("instance_code")
-        status = data.get("status")
-        event_type = data.get("type")
-        uuid = data.get("uuid")
+        # 回调基础字段
+        event_type = body.get("type")
+        status = body.get("status")
+        instance_code = body.get("instance_code")
+        approval_code = body.get("approval_code")
+        uuid = body.get("uuid")
 
-        print("approval_code:", approval_code)
-        print("instance_code:", instance_code)
-        print("status:", status)
-        print("event_type:", event_type)
-        print("uuid:", uuid)
+        print("=================================")
+        print(f"event_type: {event_type}")
+        print(f"status: {status}")
+        print(f"approval_code: {approval_code}")
+        print(f"instance_code: {instance_code}")
+        print(f"uuid: {uuid}")
+        print("=================================")
 
-        if not instance_code:
-            raise ValueError("回调数据中缺少 instance_code")
+        # 只处理审批实例 & 已通过
+        if event_type != "approval_instance" or status != "APPROVED":
+            return JSONResponse({"msg": "忽略非审批通过事件"})
+
+        # 获取 token
+        token = get_app_access_token()
 
         # 拉取完整审批实例
-        approval_instance = get_approval_instance(instance_code)
+        approval_instance = get_approval_instance(instance_code, token)
 
         print("\n==== 审批实例完整数据（飞书 API 返回） ====")
-        print(json.dumps(approval_instance, ensure_ascii=False, indent=2))
+        print(json.dumps(approval_instance, indent=2, ensure_ascii=False))
         print("==========================================\n")
 
-        # ========= 关键修复点 =========
-        # 飞书返回的 form 是 JSON 字符串，需要反序列化
-        raw_form = approval_instance.get("form")
+        # =========================
+        # 解析表单（关键步骤）
+        # =========================
+        parsed_form = parse_approval_form(approval_instance.get("form"))
 
-        if not raw_form:
-            print("审批实例中未包含 form 字段")
-            form_list = []
-        elif isinstance(raw_form, str):
-            try:
-                form_list = json.loads(raw_form)
-            except json.JSONDecodeError:
-                raise ValueError("form 字段不是合法的 JSON 字符串")
-        elif isinstance(raw_form, list):
-            form_list = raw_form
-        else:
-            raise ValueError(f"未知的 form 类型: {type(raw_form)}")
+        print("==== 审批表单字段（解析后） ====")
+        print(json.dumps(parsed_form, indent=2, ensure_ascii=False))
+        print("================================")
 
-        print("\n==== 审批表单字段（解析后） ====")
-        for item in form_list:
-            field_name = item.get("name")
-            field_type = item.get("type")
-            field_value = item.get("value")
+        # 这里以后可以：
+        # - 写数据库
+        # - 调 ERP
+        # - 推送 Teams / 邮件
+        # - 发 MQ / Webhook
 
-            print(f"字段名: {field_name}")
-            print(f"字段类型: {field_type}")
-            print(f"字段值: {field_value}")
-            print("------")
-        print("================================\n")
-
-        return JSONResponse(
-            status_code=200,
-            content={
-                "code": 0,
-                "msg": "received",
-                "timestamp": datetime.datetime.now().isoformat()
-            }
-        )
+        return JSONResponse({
+            "msg": "审批回调处理成功",
+            "data": parsed_form
+        })
 
     except Exception as e:
-        print("\n==== 审批回调处理异常 ====")
+        print("==== 审批回调处理异常 ====")
         print(str(e))
-        traceback.print_exc()
-
         return JSONResponse(
             status_code=500,
-            content={
-                "code": -1,
-                "msg": "callback error",
-                "error": str(e)
-            }
+            content={"error": str(e)}
         )
