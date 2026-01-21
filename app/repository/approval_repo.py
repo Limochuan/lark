@@ -137,7 +137,7 @@ class ApprovalRepository:
         self.conn.commit()
 
     # =========================
-    # 4. 表单字段
+    # 4. 表单字段（原始 form）
     # =========================
     def save_form_fields(self, instance_code: str, fields: List[Dict[str, Any]]):
         if not fields:
@@ -166,6 +166,46 @@ class ApprovalRepository:
                         field["field_name"],
                         field["field_type"],
                         field["field_value"],
+                    ),
+                )
+        self.conn.commit()
+
+    # =========================
+    # 5. 表单字段 KV 拆解表（⭐新增）
+    # =========================
+    def save_field_kv(self, rows: List[Dict[str, Any]]):
+        if not rows:
+            return
+
+        sql = """
+        INSERT INTO lark_approval_field_kv (
+            approval_id,
+            row_id,
+            widget_id,
+            field_name,
+            field_type,
+            field_value_text,
+            field_value_num,
+            currency,
+            extra_json
+        )
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        """
+
+        with self.conn.cursor() as cursor:
+            for r in rows:
+                cursor.execute(
+                    sql,
+                    (
+                        r.get("approval_id"),
+                        r.get("row_id"),
+                        r.get("widget_id"),
+                        r.get("field_name"),
+                        r.get("field_type"),
+                        r.get("field_value_text"),
+                        r.get("field_value_num"),
+                        r.get("currency"),
+                        r.get("extra_json"),
                     ),
                 )
         self.conn.commit()
